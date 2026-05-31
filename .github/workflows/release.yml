@@ -1,0 +1,53 @@
+name: Release
+
+# Push a version tag (e.g. v0.1.1) to build the Windows installer, sign the
+# update artifacts and publish a GitHub Release with a `latest.json` manifest
+# that the in-app updater reads.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build, sign and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Set these in: repo Settings > Secrets and variables > Actions.
+          # TAURI_SIGNING_PRIVATE_KEY        = contents of .keys/cadmacro_updater.key
+          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD = the password you chose (empty if none)
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "CadMacro ${{ github.ref_name }}"
+          releaseBody: "Automated release. The app will offer this update in-app."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
