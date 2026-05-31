@@ -8,6 +8,18 @@ use crate::models::Macro;
 /// Type each step's command (plus optional args) into the focused window,
 /// pressing Enter after each one. Optionally focuses a target CAD window first.
 pub fn run_macro(m: &Macro) -> Result<(), String> {
+    // A keyboard-triggered macro fires while the user is usually still holding
+    // the hotkey's modifier keys (Ctrl/Shift/Alt/Win). Those held modifiers get
+    // combined with the Enter we inject below, turning it into e.g. Ctrl+Enter,
+    // so CAD apps never receive a plain Enter and the command stays unsubmitted.
+    // Release the modifiers first to guarantee a clean Enter. (Mouse triggers
+    // hold nothing, which is why they already worked.)
+    #[cfg(windows)]
+    if m.trigger.kind == "keyboard" {
+        release_modifiers();
+        sleep(Duration::from_millis(40));
+    }
+
     #[cfg(windows)]
     if m.target != "any" {
         if focus_target(&m.target) {
@@ -45,6 +57,46 @@ pub fn run_macro(m: &Macro) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Release any modifier keys (Ctrl/Shift/Alt/Win) that may still be physically
+/// held from the triggering keyboard shortcut, so injected keystrokes — most
+/// importantly Enter — are not silently combined with a stuck modifier.
+#[cfg(windows)]
+fn release_modifiers() {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL,
+        VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT,
+        VK_RWIN, VK_SHIFT,
+    };
+
+    // Send key-up for both the generic and left/right variants of every modifier
+    // so a stuck Ctrl/Shift/Alt/Win is cleared regardless of which side was used.
+    let modifiers = [
+        VK_CONTROL, VK_LCONTROL, VK_RCONTROL, VK_SHIFT, VK_LSHIFT, VK_RSHIFT, VK_MENU, VK_LMENU,
+        VK_RMENU, VK_LWIN, VK_RWIN,
+    ];
+
+    let inputs: Vec<INPUT> = modifiers
+        .iter()
+        .map(|&vk| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: vk,
+                    wScan: 0,
+                    dwFlags: KEYEVENTF_KEYUP,
+                    time: 0,
+                    dwExtraInfo: 0,
+                },
+            },
+        })
+        .collect();
+
+    // SAFETY: `inputs` is a valid, non-empty slice of INPUT for the call's duration.
+    unsafe {
+        SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
+    }
 }
 
 /// Best-effort: bring a window whose title matches the target to the foreground.

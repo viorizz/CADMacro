@@ -1,6 +1,6 @@
 [package]
 name = "cadmacro"
-version = "0.1.0"
+version = "0.1.1"
 description = "Create and run AutoCAD/BaCAD command macros with keybinds and mouse buttons."
 authors = ["CadMacro"]
 edition = "2021"
