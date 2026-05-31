@@ -1,12 +1,14 @@
 name: Release
 
-# Push a version tag (e.g. v0.1.1) to build the Windows installer, sign the
-# update artifacts and publish a GitHub Release with a `latest.json` manifest
-# that the in-app updater reads.
+# Two ways to trigger a release build:
+#   1. Push a version tag like `v0.1.1`  -> builds + publishes that release.
+#   2. The "Run workflow" button (manual) -> builds + publishes from the
+#      selected branch using the version in src-tauri/tauri.conf.json.
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -32,6 +34,31 @@ jobs:
         with:
           workspaces: "./src-tauri -> target"
 
+      # The version that drives updates lives in tauri.conf.json, not the git
+      # tag. Resolve it once and reuse it as the canonical release tag/name.
+      - name: Resolve app version
+        id: appversion
+        shell: pwsh
+        run: |
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version"    >> $env:GITHUB_OUTPUT
+          Write-Host "App version is $version (release tag: v$version)"
+
+      # Fail fast if you pushed a tag that doesn't match tauri.conf.json, so the
+      # git tag and the actual app/updater version can never silently diverge.
+      - name: Verify pushed tag matches app version
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $pushed   = "${{ github.ref_name }}"
+          $expected = "${{ steps.appversion.outputs.tag }}"
+          if ($pushed -ne $expected) {
+            Write-Error "Tag '$pushed' does not match the version in src-tauri/tauri.conf.json (expected '$expected'). Bump the version in package.json AND src-tauri/tauri.conf.json, then push the matching tag."
+            exit 1
+          }
+          Write-Host "OK: tag '$pushed' matches the app version."
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -39,15 +66,15 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Set these in: repo Settings > Secrets and variables > Actions.
-          # TAURI_SIGNING_PRIVATE_KEY        = contents of .keys/cadmacro_updater.key
-          # TAURI_SIGNING_PRIVATE_KEY_PASSWORD = the password you chose (empty if none)
+          # Added in repo Settings > Secrets and variables > Actions:
+          #   TAURI_SIGNING_PRIVATE_KEY          = contents of .keys/cadmacro_updater.key
+          #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD = contents of .keys/updater_password.txt
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "CadMacro ${{ github.ref_name }}"
-          releaseBody: "Automated release. The app will offer this update in-app."
+          tagName: ${{ steps.appversion.outputs.tag }}
+          releaseName: "CadMacro ${{ steps.appversion.outputs.tag }}"
+          releaseBody: "Automated release. CadMacro will offer this update in-app."
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
